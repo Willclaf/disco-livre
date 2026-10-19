@@ -252,6 +252,7 @@ final class Estado: ObservableObject {
     }
 
     var aoAtualizar: (() -> Void)?
+    var pedirJanela: (() -> Void)?
     private var ultimaAtualizacao = Date.distantPast
     private var tarefaMeta: Task<Void, Never>?
 
@@ -699,6 +700,8 @@ struct PainelView: View {
             }
             Button { e.mostrandoApoio = true } label: { Text("☕").font(.system(size: 14)) }
                 .help("Me paga um café — o Disco Livre é grátis")
+            Button { e.pedirJanela?() } label: { Image(systemName: "macwindow") }
+                .help("Abrir como janela")
             Button { Task { await e.atualizar() } } label: { Image(systemName: "arrow.clockwise") }
                 .help("Atualizar")
         }
@@ -835,6 +838,7 @@ struct AnaliseGeralView: View {
     @State private var confirmandoLixeira = false
     @State private var pulse = false
     @State private var festa = false
+    @State private var cafeCopiado = false
 
     var body: some View {
         switch e.fase {
@@ -1042,9 +1046,10 @@ struct AnaliseGeralView: View {
                     }
                 }
             }
+            if liberado >= 10 * 1_048_576 { cartaoCafe(liberado) }
             Button { e.concluirGeral() } label: { Text("Concluir").frame(maxWidth: .infinity) }
                 .buttonStyle(Capsula(cor: .blue))
-            if liberado > 0 {
+            if liberado > 0 && liberado < 10 * 1_048_576 {
                 Button { e.mostrandoApoio = true } label: {
                     Text("☕ Curtiu? Me paga um café").font(.caption)
                 }
@@ -1054,6 +1059,36 @@ struct AnaliseGeralView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(18)
+    }
+
+    /// Só aparece quando a limpeza liberou 10 GB ou mais: é quando a pessoa sentiu o valor.
+    func cartaoCafe(_ kb: Int64) -> some View {
+        HStack(spacing: 12) {
+            if let qr = Pix.qr() {
+                Image(nsImage: qr)
+                    .interpolation(.none)
+                    .resizable()
+                    .frame(width: 84, height: 84)
+                    .padding(6)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white))
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                Text("☕ Que tal me pagar um café?").font(.callout.weight(.semibold))
+                Text("Foram \(tamanho(kb)) a menos no seu Mac. O Disco Livre é grátis e vai continuar assim: um Pix de qualquer valor me ajuda a mantê-lo.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    Pix.copiar(Pix.copiaECola)
+                    cafeCopiado = true
+                } label: {
+                    Text(cafeCopiado ? "Pix copiado ✓" : "Copiar Pix Copia e Cola")
+                }
+                .buttonStyle(Capsula(cor: .green))
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.green.opacity(0.08)))
     }
 
     func cartaoLixeira(_ kb: Int64) -> some View {
@@ -1169,6 +1204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var timerAbrir: Timer?
     var timerFechar: Timer?
     var fixo = false   // aberto com clique: só fecha com clique fora
+    var janela: NSWindow?
 
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -1188,6 +1224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.animates = true
 
         estado.aoAtualizar = { [weak self] in self?.atualizarIcone() }
+        estado.pedirJanela = { [weak self] in self?.abrirJanela() }
 
         // passar o mouse no ícone abre; sair de perto fecha
         if let m = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved], handler: { [weak self] _ in
@@ -1206,10 +1243,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await estado.atualizar()
             // primeira vez (ou instalador pediu): abre sozinho e já faz a análise geral
             let boasVindas = CommandLine.arguments.contains("--boas-vindas")
-            if boasVindas || estado.resumo?.primeiraFeita == false {
+            let primeira = boasVindas || estado.resumo?.primeiraFeita == false
+            if primeira {
                 abrir(fixo: true)
                 await estado.analisarGeral()
             }
+            await perguntarAbrirAoLigar()
+            // aberto por quem clicou no app (e não pelo login): mostra a janela
+            if !boasVindas && !primeira && !abriuNoLogin() && CommandLine.arguments.count == 1 { abrirJanela() }
         }
         if CommandLine.arguments.contains("--mostrar") { abrir(fixo: true) }
         Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
@@ -1222,15 +1263,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: janela (app de verdade), pergunta do login e ícone
+
+    /// Abre o app numa janela normal (Dock + Cmd-Tab) além do ícone da barra.
+    func abrirJanela() {
+        fechar(forcar: true)
+        if janela == nil {
+            let host = NSHostingController(rootView: PainelView().environmentObject(estado))
+            host.sizingOptions = [.preferredContentSize]
+            let w = NSWindow(contentViewController: host)
+            w.title = "Disco Livre"
+            w.styleMask = [.titled, .closable, .miniaturizable]
+            w.isReleasedWhenClosed = false
+            w.center()
+            NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    self?.janela = nil
+                    NSApp.setActivationPolicy(.accessory)
+                }
+            }
+            janela = w
+        }
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        janela?.makeKeyAndOrderFront(nil)
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        abrirJanela()
+        return true
+    }
+
+    /// O macOS abriu o app sozinho no login? (nesse caso não mostra janela)
+    func abriuNoLogin() -> Bool {
+        let ev = NSAppleEventManager.shared().currentAppleEvent
+        return ev?.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue == AEKeyword(keyAELaunchedAsLogInItem)
+    }
+
+    /// Pergunta uma única vez se a pessoa quer abrir ao ligar o Mac.
+    func perguntarAbrirAoLigar() async {
+        let d = UserDefaults.standard
+        guard !d.bool(forKey: "askedLaunchAtLogin") else { return }
+        d.set(true, forKey: "askedLaunchAtLogin")
+        if SMAppService.mainApp.status == .enabled { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "Abrir o Disco Livre quando ligar o Mac?"
+        a.informativeText = "Assim o ícone fica sempre na barra de cima, de olho no seu espaço livre. Você pode mudar isso depois em Ajustes."
+        a.addButton(withTitle: "Sim, abrir ao ligar")
+        a.addButton(withTitle: "Agora não")
+        if a.runModal() == .alertFirstButtonReturn { try? SMAppService.mainApp.register() }
+    }
+
+    /// Ícone da barra: anel que mostra quanto do disco está livre.
+    func ring(_ free: Double, alert: Bool) -> NSImage {
+        let img = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
+            let c = NSPoint(x: 9, y: 9)
+            let cor: NSColor = alert ? .systemRed : .black
+            cor.withAlphaComponent(0.28).setStroke()
+            let trilho = NSBezierPath()
+            trilho.appendArc(withCenter: c, radius: 6.5, startAngle: 0, endAngle: 360)
+            trilho.lineWidth = 2.2
+            trilho.stroke()
+            cor.setStroke()
+            let arco = NSBezierPath()
+            arco.appendArc(withCenter: c, radius: 6.5, startAngle: 90, endAngle: 90 - 360 * CGFloat(max(0.03, min(1, free))), clockwise: true)
+            arco.lineWidth = 2.2
+            arco.lineCapStyle = .round
+            arco.stroke()
+            cor.setFill()
+            NSBezierPath(ovalIn: NSRect(x: 7.2, y: 7.2, width: 3.6, height: 3.6)).fill()
+            return true
+        }
+        img.isTemplate = !alert
+        return img
+    }
+
     func atualizarIcone() {
         guard let b = item.button else { return }
         guard let r = estado.resumo else { b.title = ""; return }
         let gb = Int((Double(r.livre) * 1024 / 1e9).rounded())
         let abaixo = r.livre < r.metaKb
         b.title = " \(gb) GB"
-        b.image = NSImage(systemSymbolName: abaixo ? "exclamationmark.triangle.fill" : "internaldrive",
-                          accessibilityDescription: "Disco Livre")
-        b.contentTintColor = abaixo ? .systemRed : nil
+        b.image = ring(Double(r.livre) / Double(max(r.total, 1)), alert: abaixo)
+        b.contentTintColor = nil
     }
 
     var areaDoIcone: NSRect {
