@@ -62,6 +62,9 @@ enum Instalador {
         try? fm.removeItem(atPath: CLI.caminho)
         guard (try? fm.copyItem(atPath: embutida, toPath: CLI.caminho)) != nil else { return false }
         try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: CLI.caminho)
+        // marca que veio pelo app: se o app sumir, o vigia se desinstala sozinho
+        try? fm.createDirectory(atPath: casa + "/.config/disco-livre", withIntermediateDirectories: true)
+        try? "1".write(toFile: casa + "/.config/disco-livre/via-app", atomically: true, encoding: .utf8)
 
         // skill pro Claude Code / Codex, se a pessoa usar
         if let skill = Bundle.main.path(forResource: "skill-disco-livre", ofType: nil) {
@@ -289,6 +292,21 @@ final class Estado: ObservableObject {
         limpando = false
         let ganho = (resumo?.livre ?? 0) - antes
         aviso = ganho > 102_400 ? "Pronto! Liberei \(tamanho(ganho))." : "Pronto! Lixo limpo."
+    }
+
+    /// Pergunta e, se a pessoa confirmar, remove o app, o vigia e as configurações.
+    func confirmarDesinstalar() {
+        let a = NSAlert()
+        a.messageText = "Desinstalar o Disco Livre?"
+        a.informativeText = "Remove o app, o vigia e as configurações. O que ele já limpou não é desfeito."
+        a.addButton(withTitle: "Desinstalar")
+        a.addButton(withTitle: "Cancelar")
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        Task {
+            setenv("DISCO_LIVRE_DE_APP", "1", 1)
+            _ = await CLI.rodar(["desinstalar"])
+            NSApp.terminate(nil)
+        }
     }
 
     func mudarMeta(_ gb: Int) {
@@ -805,6 +823,10 @@ struct PainelView: View {
             Toggle("Limpar sozinho abaixo da meta",
                    isOn: Binding(get: { r.autoLimpeza }, set: { v in Task { await e.mudarAutoLimpeza(v) } }))
                 .disabled(!r.vigilancia)
+            Button { e.confirmarDesinstalar() } label: {
+                Label("Desinstalar o Disco Livre…", systemImage: "trash")
+            }
+            .buttonStyle(.borderless).foregroundStyle(.secondary)
             Toggle("Abrir ao ligar o Mac", isOn: Binding(get: { iniciarComMac }, set: { v in
                 do {
                     if v { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }

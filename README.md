@@ -193,9 +193,22 @@ Também dá pra apoiar pelo app (☕ no rodapé) ou no Terminal: `disco-livre ap
 
 ## Desinstalar
 
+O Disco Livre deixa uma "vigilância" rodando em segundo plano (ela confere seu espaço de tempos em tempos). Por isso, **só arrastar o app pra Lixeira não basta**: a vigilância continua e o macOS pode seguir pedindo permissões. Escolha um jeito:
+
+**1. Pelo app (mais fácil)**
+Clique no ícone da barra de cima › **Ajustes** › **Desinstalar o Disco Livre…**
+
+**2. Pelo Terminal (funciona mesmo se você já apagou o app)**
+Abra o app **Terminal**, cole esta linha e aperte Enter:
+
 ```bash
-./uninstall.sh
+zsh -c "$(curl -fsSL https://raw.githubusercontent.com/Willclaf/disco-livre/main/uninstall.sh)"
 ```
+
+Ela remove o app, a vigilância, o comando `disco-livre`, as configurações e as permissões que o macOS tinha guardado. Não desfaz nada que ele já limpou.
+
+**3. Já apaguei o app e fiquei com a vigilância**
+A partir da versão 1.4.1 ela percebe sozinha que o app sumiu e se remove na próxima verificação (até 3 horas). Se não quiser esperar, use o jeito 2.
 
 ---
 

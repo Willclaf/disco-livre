@@ -6,7 +6,7 @@ emulate -R zsh
 setopt NULL_GLOB
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 
-VERSAO="1.4.0"
+VERSAO="1.4.1"
 SCRIPT="${0:A}"
 DIR_CONF="${DISCO_LIVRE_DIR:-$HOME/.config/disco-livre}"
 CONF="$DIR_CONF/config"
@@ -562,6 +562,7 @@ registrar() {
 }
 
 cmd_vigiar() {
+  if app_sumiu; then registrar; log "o app foi removido: desinstalando o vigia"; cmd_desinstalar >/dev/null; return 0; fi
   registrar
   local livre=$(livre_kb) meta=$(( $(gb_kb $META_GB) )) c n tam s
 
@@ -679,6 +680,26 @@ cmd_desativar() {
   launchctl bootout "gui/$UID/$LABEL" 2>/dev/null
   rm -f "$PLIST"
   print -r -- "${G}✓${N} Vigilância desligada."
+}
+
+# remove tudo: vigilância, comando, skills, configuração, permissões e o app
+cmd_desinstalar() {
+  launchctl bootout "gui/$UID/$LABEL" 2>/dev/null
+  rm -f "$PLIST"
+  rm -f "$HOME/.local/bin/disco-livre"
+  rm -rf "$HOME/.claude/skills/disco-livre" "$HOME/.codex/skills/disco-livre" "$DIR_CONF"
+  tccutil reset All com.disco-livre.app >/dev/null 2>&1   # esquece as permissões que o macOS tinha dado
+  [[ -z $DISCO_LIVRE_DE_APP ]] && pkill -x DiscoLivre 2>/dev/null
+  rm -rf "/Applications/Disco Livre.app" "$HOME/Applications/Disco Livre.app"
+  print -r -- "${G}✓${N} Disco Livre removido. (O histórico fica em $(curto "$LOG"))"
+}
+
+# o app foi apagado (arrastado pra Lixeira) mas o vigia ficou? Ele mesmo se remove.
+app_sumiu() {
+  [[ -f $DIR_CONF/via-app ]] || return 1
+  [[ -d "/Applications/Disco Livre.app" || -d "$HOME/Applications/Disco Livre.app" ]] && return 1
+  [[ -n $(mdfind "kMDItemCFBundleIdentifier == 'com.disco-livre.app'" 2>/dev/null | head -1) ]] && return 1
+  return 0
 }
 
 plist_da_tarefa() {
@@ -1091,6 +1112,7 @@ ${B}Uso:${N}
 
   disco-livre ativar               liga a vigilância automática
   disco-livre desativar            desliga a vigilância automática
+  disco-livre desinstalar          remove tudo (app, vigilância, comando, configuração)
   disco-livre config               mostra/muda a configuração
   disco-livre config meta 30       espaço livre mínimo (GB)
   disco-livre config auto-limpeza sim   limpa sozinho quando passar da meta
@@ -1122,6 +1144,7 @@ case ${1:-status} in
   config)          shift; cmd_config "$@" ;;
   ativar)          cmd_ativar ;;
   desativar)       cmd_desativar ;;
+  desinstalar)     cmd_desinstalar ;;
   mover)           shift; cmd_mover "$@" ;;
   pausar-tarefa)   cmd_pausar_tarefa "$2" ;;
   religar-tarefa)  cmd_religar_tarefa "$2" ;;
